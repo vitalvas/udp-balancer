@@ -102,9 +102,9 @@ servers:
 | `servers[].balancer.backends[].preserve_src_address` | Keep original source IP | `false` |
 | `servers[].balancer.backends[].source_address` | Use custom source IP | none |
 | `servers[].balancer.backends[].fallback_source_address` | IPv4 fallback for IPv6 clients (with preserve_src_address) | none |
-| `servers[].balancer.backends[].check_url` | Health check URL | none |
-| `servers[].balancer.backends[].interval` | Health check interval | `5s` |
-| `servers[].balancer.backends[].timeout` | Health check timeout | `2s` |
+| `servers[].balancer.backends[].healthcheck.url` | Health check URL | none |
+| `servers[].balancer.backends[].healthcheck.interval` | Health check interval | `5s` |
+| `servers[].balancer.backends[].healthcheck.timeout` | Health check timeout | `2s` |
 | `servers[].mirror.targets[].address` | Mirror destination | required |
 | `servers[].mirror.targets[].probability` | Send probability (0.0-1.0) | `1.0` |
 | `servers[].mirror.targets[].preserve_src_address` | Keep original source IP | `false` |

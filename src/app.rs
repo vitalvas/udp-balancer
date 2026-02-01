@@ -59,11 +59,11 @@ impl App {
                         UdpBackend::new(backend_addr, mode, 1.0, backend_cfg.weight).await?;
                     let backend = Arc::new(backend);
 
-                    if let Some(ref check_url) = backend_cfg.check_url {
+                    if let Some(ref healthcheck) = backend_cfg.healthcheck {
                         health_checks.push(HealthCheck {
-                            url: check_url.clone(),
-                            interval: backend_cfg.interval,
-                            timeout: backend_cfg.timeout,
+                            url: healthcheck.url.clone(),
+                            interval: healthcheck.interval,
+                            timeout: healthcheck.timeout,
                             alive: backend.alive_flag(),
                             listener_addr: listener_addr_str.clone(),
                             backend_addr: backend_cfg.address.clone(),

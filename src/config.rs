@@ -110,7 +110,13 @@ pub struct BackendConfig {
     pub preserve_src_address: bool,
     pub source_address: Option<String>,
     pub fallback_source_address: Option<String>,
-    pub check_url: Option<String>,
+    pub healthcheck: Option<HealthCheckConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthCheckConfig {
+    pub url: String,
     #[serde(default = "default_check_interval", with = "humantime_serde")]
     pub interval: Duration,
     #[serde(default = "default_check_timeout", with = "humantime_serde")]
@@ -330,24 +336,24 @@ impl Config {
             }
         }
 
-        if let Some(ref url) = backend.check_url {
-            if !url.starts_with("http://") && !url.starts_with("https://") {
+        if let Some(ref healthcheck) = backend.healthcheck {
+            if !healthcheck.url.starts_with("http://") && !healthcheck.url.starts_with("https://") {
                 return Err(ConfigError::Validation(format!(
-                    "server[{}].backend[{}]: check_url must start with http:// or https://",
+                    "server[{}].backend[{}]: healthcheck.url must start with http:// or https://",
                     server_index, backend_index
                 )));
             }
 
-            if backend.interval.is_zero() {
+            if healthcheck.interval.is_zero() {
                 return Err(ConfigError::Validation(format!(
-                    "server[{}].backend[{}]: interval must be greater than 0",
+                    "server[{}].backend[{}]: healthcheck.interval must be greater than 0",
                     server_index, backend_index
                 )));
             }
 
-            if backend.timeout.is_zero() {
+            if healthcheck.timeout.is_zero() {
                 return Err(ConfigError::Validation(format!(
-                    "server[{}].backend[{}]: timeout must be greater than 0",
+                    "server[{}].backend[{}]: healthcheck.timeout must be greater than 0",
                     server_index, backend_index
                 )));
             }
@@ -542,18 +548,17 @@ servers:
     balancer:
       backends:
         - address: "10.0.0.1:2055"
-          check_url: "http://10.0.0.1:8080/health"
-          interval: 10s
-          timeout: 3s
+          healthcheck:
+            url: "http://10.0.0.1:8080/health"
+            interval: 10s
+            timeout: 3s
 "#;
         let config = Config::from_str(yaml).unwrap();
         let backend = &config.servers[0].balancer.as_ref().unwrap().backends[0];
-        assert_eq!(
-            backend.check_url.as_ref().unwrap(),
-            "http://10.0.0.1:8080/health"
-        );
-        assert_eq!(backend.interval, Duration::from_secs(10));
-        assert_eq!(backend.timeout, Duration::from_secs(3));
+        let healthcheck = backend.healthcheck.as_ref().unwrap();
+        assert_eq!(healthcheck.url, "http://10.0.0.1:8080/health");
+        assert_eq!(healthcheck.interval, Duration::from_secs(10));
+        assert_eq!(healthcheck.timeout, Duration::from_secs(3));
     }
 
     #[test]
@@ -729,19 +734,20 @@ servers:
     }
 
     #[test]
-    fn test_validation_invalid_check_url() {
+    fn test_validation_invalid_healthcheck_url() {
         let yaml = r#"
 servers:
   - address: ":2055"
     balancer:
       backends:
         - address: "10.0.0.1:2055"
-          check_url: "ftp://invalid"
+          healthcheck:
+            url: "ftp://invalid"
 "#;
         let result = Config::from_str(yaml);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("check_url must start with http://"));
+        assert!(err.contains("healthcheck.url must start with http://"));
     }
 
     #[test]
