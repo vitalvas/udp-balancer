@@ -1,0 +1,170 @@
+# UDP Balancer Configuration Example
+# This file demonstrates all available configuration options
+
+# HTTP status server address (host:port)
+# Provides /ping, /status, /metrics, and /debug/pprof/* endpoints
+# Default: ":8989"
+status: ":8989"
+
+servers:
+  # Example 1: NetFlow/IPFIX collector with load balancing
+  - address: ":2055"
+    # Listener mode options:
+    #   standard - Single socket listener (default)
+    #   batch    - Multi-worker with SO_REUSEPORT for high performance
+    listener_mode: "batch"
+    # Number of listener workers for batch mode
+    # 0 = auto (uses num CPUs)
+    # Range: 0-1024
+    # Default: 0
+    listener_workers: 4
+    balancer:
+      # Algorithm options:
+      #   wrr    - Weighted Round Robin (stateless, even distribution)
+      #   rh     - Rendezvous Hashing (flow-consistent, uses hash_key fields)
+      #   maglev - Maglev Hashing (O(1) lookup, flow-consistent, minimal disruption)
+      algorithm: "rh"
+      # Hash key fields (only used with 'rh' and 'maglev' algorithms)
+      # Available fields: src_ip, dst_ip, src_port, dst_port, ipfix, ipfix_template_id
+      # Default: [src_ip, dst_ip, src_port, dst_port]
+      # 'ipfix' extracts IPFIX Observation Domain ID from payload
+      # 'ipfix_template_id' extracts IPFIX Template ID (Set ID) from first Data Set
+      hash_key:
+        - src_ip
+        - dst_ip
+        - src_port
+        - dst_port
+        - ipfix
+      # Session timeout for client-to-backend mappings
+      # How long to keep UDP session alive after last packet
+      # Default: 30s
+      proxy_timeout: 60s
+      backends:
+        - address: "10.0.0.1:2055"
+          weight: 1.0
+          check_url: "http://10.0.0.1:8080/health"
+          interval: 5s # Health check interval (default: 5s)
+          timeout: 2s # Health check timeout (default: 2s)
+        - address: "10.0.0.2:2055"
+          weight: 1.0
+          check_url: "http://10.0.0.2:8080/health"
+        # Backend with custom source address (requires raw socket)
+        - address: "10.0.0.3:2055"
+          weight: 1.0
+          source_address: "192.0.2.1"
+        # Backend with preserved source address and fallback for IPv6 clients
+        - address: "10.0.0.4:2055"
+          weight: 1.0
+          preserve_src_address: true
+          fallback_source_address: "192.0.2.100"  # Used when client is IPv6
+
+  # Example 2: sFlow collector with weighted distribution
+  - address: ":6343"
+    balancer:
+      algorithm: "wrr"
+      backends:
+        - address: "10.0.0.1:6343"
+          weight: 2.0 # Receives 2x traffic
+        - address: "10.0.0.2:6343"
+          weight: 1.0
+
+  # Example 3: DNS proxy with flow consistency (default 5-tuple)
+  - address: ":53"
+    balancer:
+      algorithm: "rh"
+      # Uses default hash_key: [src_ip, dst_ip, src_port, dst_port]
+      backends:
+        - address: "8.8.8.8:53"
+          weight: 1.0
+        - address: "8.8.4.4:53"
+          weight: 1.0
+
+  # Example 4: TFTP with source IP only hashing (handles port changes)
+  - address: ":69"
+    balancer:
+      algorithm: "rh"
+      hash_key:
+        - src_ip
+      backends:
+        - address: "10.0.0.1:69"
+          weight: 1.0
+        - address: "10.0.0.2:69"
+          weight: 1.0
+
+  # Example 5: RADIUS with srcIP + dstIP + dstPort (ignores source port)
+  - address: ":1812"
+    balancer:
+      algorithm: "rh"
+      hash_key:
+        - src_ip
+        - dst_ip
+        - dst_port
+      backends:
+        - address: "10.0.0.1:1812"
+          weight: 1.0
+        - address: "10.0.0.2:1812"
+          weight: 1.0
+
+  # Example 6: Syslog with mirroring only (copy to multiple destinations)
+  - address: ":514"
+    mirror:
+      targets:
+        - address: "10.0.0.1:514"
+          preserve_src_address: false
+        - address: "10.0.0.2:514"
+          preserve_src_address: false
+
+  # Example 7: Streaming telemetry with load balancing and mirroring
+  - address: ":50000"
+    balancer:
+      algorithm: "rh"
+      backends:
+        - address: "10.0.0.1:50000"
+          weight: 1.0
+        - address: "10.0.0.2:50000"
+          weight: 1.0
+    mirror:
+      targets:
+        # Mirror to local analyzer (preserve original source address)
+        - address: "127.0.0.1:50001"
+          preserve_src_address: true
+        # Mirror to remote with fake source IP (must match address family)
+        - address: "10.0.0.100:50000"
+          source_address: "192.0.2.1"
+        # Mirror 10% of traffic for sampling
+        - address: "10.0.0.200:50000"
+          probability: 0.1
+
+  # Example 8: SNMP traps with source IP hashing
+  - address: ":162"
+    balancer:
+      algorithm: "rh"
+      hash_key:
+        - src_ip
+      backends:
+        - address: "10.0.0.1:162"
+          weight: 1.0
+
+  # Example 9: NTP with round-robin
+  - address: ":123"
+    balancer:
+      algorithm: "wrr"
+      backends:
+        - address: "10.0.0.1:123"
+          weight: 1.0
+        - address: "10.0.0.2:123"
+          weight: 1.0
+
+  # Example 10: gRPC telemetry with Maglev hashing (O(1) lookup)
+  - address: ":57400"
+    balancer:
+      algorithm: "maglev"
+      hash_key:
+        - src_ip
+      backends:
+        - address: "10.0.0.1:57400"
+          weight: 1.0
+        - address: "10.0.0.2:57400"
+          weight: 1.0
+        - address: "10.0.0.3:57400"
+          weight: 1.0
