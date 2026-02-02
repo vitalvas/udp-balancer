@@ -17,6 +17,7 @@ pub enum BackendError {
     #[error("failed to send packet: {0}")]
     SendFailed(io::Error),
     #[error("raw socket not supported on this platform")]
+    #[allow(dead_code)]
     RawSocketNotSupported,
 }
 

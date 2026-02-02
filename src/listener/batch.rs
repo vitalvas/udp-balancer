@@ -61,8 +61,6 @@ impl BatchListener {
 
     #[cfg(target_os = "linux")]
     fn create_reuseport_socket(address: SocketAddr) -> Result<UdpSocket, std::io::Error> {
-        use std::os::unix::io::IntoRawFd;
-
         let domain = if address.is_ipv4() {
             Domain::IPV4
         } else {
