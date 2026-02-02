@@ -27,6 +27,7 @@ impl HealthChecker {
     pub fn new(checks: Vec<HealthCheck>) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
+            .danger_accept_invalid_certs(true)
             .build()
             .expect("Failed to create HTTP client");
 
@@ -128,7 +129,8 @@ impl HealthChecker {
 
         match result {
             Ok(response) => {
-                if response.status().is_success() {
+                let status = response.status().as_u16();
+                if (200..500).contains(&status) {
                     Ok(())
                 } else {
                     Err(format!("HTTP {}", response.status()))

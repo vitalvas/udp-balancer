@@ -197,23 +197,24 @@ impl App {
         for cfg in configs {
             let addr = parse_socket_addr(&cfg.address)?;
 
-            let mode = if cfg.preserve_src_address {
+            let backend = if cfg.preserve_src_address {
                 let fallback = cfg
                     .fallback_source_address
                     .as_ref()
                     .map(|s| s.parse::<std::net::Ipv4Addr>())
                     .transpose()?;
-                SendMode::PreserveSrcAddr {
+                let mode = SendMode::PreserveSrcAddr {
                     fallback_ipv4: fallback,
-                }
+                };
+                UdpBackend::new(addr, mode, cfg.probability, 1.0).await?
             } else if let Some(ref src_addr) = cfg.source_address {
                 let ip: IpAddr = src_addr.parse()?;
-                SendMode::FakeSrcAddr(ip)
+                let mode = SendMode::FakeSrcAddr(ip);
+                UdpBackend::new(addr, mode, cfg.probability, 1.0).await?
             } else {
-                SendMode::Standard
+                UdpBackend::new_unconnected(addr, cfg.probability, 1.0).await?
             };
 
-            let backend = UdpBackend::new(addr, mode, cfg.probability, 1.0).await?;
             backends.push(Arc::new(backend));
         }
 

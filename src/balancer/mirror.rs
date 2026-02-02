@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tracing::warn;
+use tracing::error;
 
 use super::UdpBackend;
 use crate::metrics::{MIRROR_BYTES_SENT, MIRROR_PACKETS_FAILED, MIRROR_PACKETS_SENT};
@@ -42,7 +42,7 @@ impl Mirror {
                     MIRROR_PACKETS_FAILED
                         .with_label_values(&[&listener_addr, &backend_str])
                         .inc();
-                    warn!("Failed to mirror to {}: {}", backend_str, e);
+                    error!("Mirror failed to {}: {}", backend_str, e);
                 }
             }
         }

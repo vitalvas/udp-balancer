@@ -20,6 +20,8 @@ A high-performance UDP load balancer written in Rust with support for flow-consi
   - Probability-based sampling
 
 - **Health Checking** - HTTP-based backend health checks with configurable intervals and timeouts
+  - TLS certificate verification is disabled (accepts self-signed certificates)
+  - HTTP status codes 200-499 are considered healthy (5xx are unhealthy)
 
 - **High Performance**
   - Async I/O with Tokio runtime
@@ -92,7 +94,7 @@ servers:
 |--------|-------------|---------|
 | `status` | HTTP status server address | `:8989` |
 | `servers[].address` | Listener address (`:port` for dual-stack) | required |
-| `servers[].listener_mode` | `standard` or `batch` (multi-worker with SO_REUSEPORT) | `standard` |
+| `servers[].listener_mode` | `standard` or `batch` (multi-worker with SO_REUSEPORT) | `batch` |
 | `servers[].listener_workers` | Number of workers for batch mode (0 = auto) | `0` |
 | `servers[].balancer.algorithm` | `wrr`, `rh`, or `maglev` | `wrr` |
 | `servers[].balancer.hash_key` | Hash key fields (see Hash Keys section) | all 4 |
@@ -136,6 +138,33 @@ servers:
         - address: "10.0.0.1:514"  # IPv4 backend
           preserve_src_address: true
           fallback_source_address: "192.0.2.100"  # Used for IPv6 clients
+```
+
+## Health Checking
+
+Backends can be monitored using HTTP health checks. When a backend becomes unhealthy, traffic is automatically redistributed to healthy backends.
+
+### Behavior
+
+- **TLS verification disabled** - accepts self-signed and invalid certificates
+- **Healthy status codes** - HTTP 200-499 (any response except server errors)
+- **Unhealthy** - HTTP 5xx, connection refused, timeout, or other network errors
+
+### Example
+
+```yaml
+servers:
+  - address: ":1053"
+    balancer:
+      backends:
+        - address: "8.8.8.8:53"
+          healthcheck:
+            url: "https://8.8.8.8/"
+            interval: 10s
+            timeout: 5s
+        - address: "1.1.1.1:53"
+          healthcheck:
+            url: "https://1.1.1.1/"
 ```
 
 ## HTTP Endpoints

@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 
 use crate::balancer::{Balancer, Mirror};
-use crate::config::Algorithm;
+use crate::config::{Algorithm, HashKeyField};
 use crate::metrics::{gather_metrics, get_backend_stats, get_listener_stats, get_mirror_stats};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -39,6 +39,8 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
         table{width:100%;border-collapse:collapse;font-size:11px}
         th,td{text-align:left;padding:4px 6px;border:1px solid #ddd}
         th{background:#f0f0f0}
+        tbody tr:nth-child(odd){background:#f9f9f9}
+        tbody tr:hover{background:#e8f4fc}
         .r{text-align:right}
         .ok{background:#cfc}
         .fail{background:#fcc}
@@ -82,8 +84,8 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
                 h+='<div class="sec"><div class="sec-h">Listeners</div><div class="sec-c muted">None</div></div>';
             }else{
                 d.servers.forEach(s=>{
-                    let algoTag=s.algorithm?'<span class="tag">'+s.algorithm.toUpperCase()+'</span>':'';
-                    h+='<div class="sec"><div class="sec-h">'+esc(s.listener)+algoTag+' <span style="font-weight:normal;color:#666">[RX: '+fmt(s.rx_packets)+' pkts / '+fmt(s.rx_bytes)+' B | TX: '+fmt(s.tx_packets)+' pkts / '+fmt(s.tx_bytes)+' B]</span></div>';
+                    let algoTag=s.algorithm?'<span class="tag">'+s.algorithm.toUpperCase()+(s.hash_key&&s.hash_key.length?'<span style="font-weight:normal">('+s.hash_key.join(', ')+')</span>':'')+'</span>':'';
+                    h+='<div class="sec"><div class="sec-h">'+esc(s.listener)+algoTag+' <span style="font-weight:normal;color:#666">[RX: '+fmt(s.stats.rx_packets)+' pkts / '+fmt(s.stats.rx_bytes)+' B | TX: '+fmt(s.stats.tx_packets)+' pkts / '+fmt(s.stats.tx_bytes)+' B]</span></div>';
                     h+='<div class="sec-c">';
                     if(s.backends && s.backends.length>0){
                         h+='<div class="subsec"><div class="subsec-h">Backends</div>';
@@ -91,9 +93,9 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
                         s.backends.forEach(b=>{
                             const cls=b.alive?'ok':'fail',lbl=b.alive?'UP':'DOWN';
                             h+='<tr><td>'+esc(b.address)+'</td><td class="r">'+b.weight.toFixed(1)+'</td>';
-                            h+='<td class="r">'+fmt(b.tx_packets)+'</td><td class="r">'+fmt(b.tx_bytes)+'</td>';
-                            h+='<td class="r">'+fmt(b.rx_packets)+'</td><td class="r">'+fmt(b.rx_bytes)+'</td>';
-                            h+='<td class="r">'+(b.tx_failed>0?'<b style="color:#c00">'+fmt(b.tx_failed)+'</b>':'0')+'</td>';
+                            h+='<td class="r">'+fmt(b.stats.tx_packets)+'</td><td class="r">'+fmt(b.stats.tx_bytes)+'</td>';
+                            h+='<td class="r">'+fmt(b.stats.rx_packets)+'</td><td class="r">'+fmt(b.stats.rx_bytes)+'</td>';
+                            h+='<td class="r">'+(b.stats.tx_failed>0?'<b style="color:#c00">'+fmt(b.stats.tx_failed)+'</b>':'0')+'</td>';
                             h+='<td class="'+cls+'">'+lbl+'</td></tr>';
                         });
                         h+='</tbody></table></div>';
@@ -103,8 +105,8 @@ const DASHBOARD_HTML: &str = r#"<!DOCTYPE html>
                         h+='<table><thead><tr><th>Address</th><th class="r">Prob</th><th class="r">TX pkts</th><th class="r">TX bytes</th><th class="r">Failed</th></tr></thead><tbody>';
                         s.mirrors.forEach(m=>{
                             h+='<tr><td>'+esc(m.address)+'</td><td class="r">'+(m.probability*100).toFixed(0)+'%</td>';
-                            h+='<td class="r">'+fmt(m.tx_packets)+'</td><td class="r">'+fmt(m.tx_bytes)+'</td>';
-                            h+='<td class="r">'+(m.tx_failed>0?'<b style="color:#c00">'+fmt(m.tx_failed)+'</b>':'0')+'</td></tr>';
+                            h+='<td class="r">'+fmt(m.stats.tx_packets)+'</td><td class="r">'+fmt(m.stats.tx_bytes)+'</td>';
+                            h+='<td class="r">'+(m.stats.tx_failed>0?'<b style="color:#c00">'+fmt(m.stats.tx_failed)+'</b>':'0')+'</td></tr>';
                         });
                         h+='</tbody></table></div>';
                     }
@@ -140,24 +142,42 @@ pub struct PingResponse {
 }
 
 #[derive(Serialize)]
+pub struct ListenerStats {
+    pub rx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_packets: u64,
+    pub tx_bytes: u64,
+}
+
+#[derive(Serialize)]
+pub struct BackendStats {
+    pub rx_packets: u64,
+    pub rx_bytes: u64,
+    pub tx_packets: u64,
+    pub tx_bytes: u64,
+    pub tx_failed: u64,
+}
+
+#[derive(Serialize)]
+pub struct MirrorStats {
+    pub tx_packets: u64,
+    pub tx_bytes: u64,
+    pub tx_failed: u64,
+}
+
+#[derive(Serialize)]
 pub struct BackendStatus {
     pub address: String,
     pub alive: bool,
     pub weight: f64,
-    pub tx_packets: u64,
-    pub tx_bytes: u64,
-    pub tx_failed: u64,
-    pub rx_packets: u64,
-    pub rx_bytes: u64,
+    pub stats: BackendStats,
 }
 
 #[derive(Serialize)]
 pub struct MirrorStatus {
     pub address: String,
     pub probability: f64,
-    pub tx_packets: u64,
-    pub tx_bytes: u64,
-    pub tx_failed: u64,
+    pub stats: MirrorStats,
 }
 
 #[derive(Serialize)]
@@ -165,10 +185,9 @@ pub struct ServerStatus {
     pub listener: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<Algorithm>,
-    pub rx_packets: u64,
-    pub rx_bytes: u64,
-    pub tx_packets: u64,
-    pub tx_bytes: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hash_key: Vec<HashKeyField>,
+    pub stats: ListenerStats,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backends: Vec<BackendStatus>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -244,9 +263,13 @@ async fn api_status_handler(State(state): State<AppState>) -> Json<StatusRespons
 
         let mut backends = Vec::new();
         let mut algorithm = None;
+        let mut hash_key = Vec::new();
 
         if let Some(ref balancer) = server_info.balancer {
             algorithm = Some(balancer.algorithm_type());
+            if balancer.algorithm_type() != Algorithm::Wrr {
+                hash_key = balancer.hash_key_fields().to_vec();
+            }
 
             for backend in balancer.backends() {
                 let backend_addr = backend.address().to_string();
@@ -256,11 +279,13 @@ async fn api_status_handler(State(state): State<AppState>) -> Json<StatusRespons
                     address: backend_addr,
                     alive: backend.is_alive(),
                     weight: backend.weight(),
-                    tx_packets: stats.tx_packets,
-                    tx_bytes: stats.tx_bytes,
-                    tx_failed: stats.tx_failed,
-                    rx_packets: stats.rx_packets,
-                    rx_bytes: stats.rx_bytes,
+                    stats: BackendStats {
+                        rx_packets: stats.rx_packets,
+                        rx_bytes: stats.rx_bytes,
+                        tx_packets: stats.tx_packets,
+                        tx_bytes: stats.tx_bytes,
+                        tx_failed: stats.tx_failed,
+                    },
                 });
             }
         }
@@ -274,9 +299,11 @@ async fn api_status_handler(State(state): State<AppState>) -> Json<StatusRespons
                 mirrors.push(MirrorStatus {
                     address: mirror_addr,
                     probability: backend.probability(),
-                    tx_packets: stats.tx_packets,
-                    tx_bytes: stats.tx_bytes,
-                    tx_failed: stats.tx_failed,
+                    stats: MirrorStats {
+                        tx_packets: stats.tx_packets,
+                        tx_bytes: stats.tx_bytes,
+                        tx_failed: stats.tx_failed,
+                    },
                 });
             }
         }
@@ -284,10 +311,13 @@ async fn api_status_handler(State(state): State<AppState>) -> Json<StatusRespons
         servers.push(ServerStatus {
             listener: listener_addr,
             algorithm,
-            rx_packets,
-            rx_bytes,
-            tx_packets,
-            tx_bytes,
+            hash_key,
+            stats: ListenerStats {
+                rx_packets,
+                rx_bytes,
+                tx_packets,
+                tx_bytes,
+            },
             backends,
             mirrors,
         });

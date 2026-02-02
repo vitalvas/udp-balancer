@@ -39,6 +39,7 @@ pub struct UdpBackend {
     probability: f64,
     alive: Arc<AtomicBool>,
     weight: f64,
+    connected: bool,
 }
 
 impl UdpBackend {
@@ -80,6 +81,32 @@ impl UdpBackend {
             probability,
             alive: Arc::new(AtomicBool::new(true)),
             weight,
+            connected: true,
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    pub async fn new_unconnected(
+        address: SocketAddr,
+        probability: f64,
+        weight: f64,
+    ) -> Result<Self, BackendError> {
+        let bind_addr = if address.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let socket = UdpSocket::bind(bind_addr).await?;
+
+        Ok(Self {
+            address,
+            socket: Some(socket),
+            raw_socket: None,
+            mode: SendMode::Standard,
+            probability,
+            alive: Arc::new(AtomicBool::new(true)),
+            weight,
+            connected: false,
         })
     }
 
@@ -106,12 +133,37 @@ impl UdpBackend {
                     probability,
                     alive: Arc::new(AtomicBool::new(true)),
                     weight,
+                    connected: true,
                 })
             }
             SendMode::PreserveSrcAddr { .. } | SendMode::FakeSrcAddr(_) => {
                 Err(BackendError::RawSocketNotSupported)
             }
         }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub async fn new_unconnected(
+        address: SocketAddr,
+        probability: f64,
+        weight: f64,
+    ) -> Result<Self, BackendError> {
+        let bind_addr = if address.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let socket = UdpSocket::bind(bind_addr).await?;
+
+        Ok(Self {
+            address,
+            socket: Some(socket),
+            mode: SendMode::Standard,
+            probability,
+            alive: Arc::new(AtomicBool::new(true)),
+            weight,
+            connected: false,
+        })
     }
 
     pub fn address(&self) -> SocketAddr {
@@ -162,10 +214,12 @@ impl UdpBackend {
         match self.mode {
             SendMode::Standard => {
                 if let Some(ref socket) = self.socket {
-                    let sent = socket
-                        .send(payload)
-                        .await
-                        .map_err(BackendError::SendFailed)?;
+                    let sent = if self.connected {
+                        socket.send(payload).await
+                    } else {
+                        socket.send_to(payload, self.address).await
+                    }
+                    .map_err(BackendError::SendFailed)?;
                     Ok(sent)
                 } else {
                     Err(BackendError::SendFailed(io::Error::other(
@@ -175,8 +229,20 @@ impl UdpBackend {
             }
             SendMode::PreserveSrcAddr { fallback_ipv4 } => {
                 if let Some(ref raw) = self.raw_socket {
-                    // Use fallback IPv4 when client is IPv6 but backend is IPv4
-                    let effective_src = if src_addr.is_ipv6() && self.address.is_ipv4() {
+                    // Extract real IPv4 from IPv4-mapped IPv6 addresses (::ffff:x.x.x.x)
+                    let real_src = match src_addr.ip() {
+                        IpAddr::V6(v6) => {
+                            if let Some(v4) = v6.to_ipv4_mapped() {
+                                SocketAddr::new(IpAddr::V4(v4), src_addr.port())
+                            } else {
+                                src_addr
+                            }
+                        }
+                        IpAddr::V4(_) => src_addr,
+                    };
+
+                    // Use fallback IPv4 when client is true IPv6 but backend is IPv4
+                    let effective_src = if real_src.is_ipv6() && self.address.is_ipv4() {
                         if let Some(fallback) = fallback_ipv4 {
                             SocketAddr::new(IpAddr::V4(fallback), src_addr.port())
                         } else {
@@ -185,7 +251,7 @@ impl UdpBackend {
                             )));
                         }
                     } else {
-                        src_addr
+                        real_src
                     };
                     raw.send_to(effective_src, self.address, payload)
                         .map_err(|e| BackendError::SendFailed(io::Error::other(e.to_string())))
@@ -218,10 +284,12 @@ impl UdpBackend {
         match self.mode {
             SendMode::Standard => {
                 if let Some(ref socket) = self.socket {
-                    let sent = socket
-                        .send(payload)
-                        .await
-                        .map_err(BackendError::SendFailed)?;
+                    let sent = if self.connected {
+                        socket.send(payload).await
+                    } else {
+                        socket.send_to(payload, self.address).await
+                    }
+                    .map_err(BackendError::SendFailed)?;
                     Ok(sent)
                 } else {
                     Err(BackendError::SendFailed(io::Error::other(

@@ -202,6 +202,10 @@ impl Balancer {
     pub fn listener_addr(&self) -> String {
         self.listener_addr.read().clone()
     }
+
+    pub fn hash_key_fields(&self) -> &[HashKeyField] {
+        &self.hash_key_fields
+    }
 }
 
 fn extract_ipfix_observation_domain_id(payload: &[u8]) -> Option<u32> {

@@ -1,0 +1,10 @@
+version: "3"
+
+tasks:
+  build-osx:
+    env:
+      RUSTUP_TOOLCHAIN: "{{.HOME}}/.rustup/toolchains/stable-aarch64-apple-darwin"
+      RUSTC: "{{.HOME}}/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc"
+    cmds:
+      - "$RUSTUP_TOOLCHAIN/bin/cargo zigbuild --release --target x86_64-unknown-linux-musl"
+      - du -csh target/x86_64-unknown-linux-musl/release/udp-balancer
