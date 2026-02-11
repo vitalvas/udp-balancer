@@ -2,7 +2,7 @@
 # This file demonstrates all available configuration options
 
 # HTTP status server address (host:port)
-# Provides /ping, /status, /metrics, and /debug/pprof/* endpoints
+# Provides / (dashboard), /ping, /api/v1/status, and /metrics endpoints
 # Default: ":8989"
 status: ":8989"
 
@@ -10,8 +10,8 @@ servers:
   # Example 1: NetFlow/IPFIX collector with load balancing
   - address: ":2055"
     # Listener mode options:
-    #   standard - Single socket listener (default)
-    #   batch    - Multi-worker with SO_REUSEPORT for high performance
+    #   standard - Single socket listener
+    #   batch    - Multi-worker with SO_REUSEPORT for high performance (default)
     listener_mode: "batch"
     # Number of listener workers for batch mode
     # 0 = auto (uses num CPUs)
@@ -20,7 +20,7 @@ servers:
     listener_workers: 4
     balancer:
       # Algorithm options:
-      #   wrr    - Weighted Round Robin (stateless, even distribution)
+      #   wrr    - Weighted Round Robin (stateless, even distribution) (default)
       #   rh     - Rendezvous Hashing (flow-consistent, uses hash_key fields)
       #   maglev - Maglev Hashing (O(1) lookup, flow-consistent, minimal disruption)
       algorithm: "rh"
@@ -130,7 +130,8 @@ servers:
         # Mirror to local analyzer (preserve original source address)
         - address: "127.0.0.1:50001"
           preserve_src_address: true
-        # Mirror to remote with fake source IP (must match address family)
+          fallback_source_address: "192.0.2.100"  # Used when client is IPv6
+        # Mirror to remote with custom source IP (must match address family)
         - address: "10.0.0.100:50000"
           source_address: "192.0.2.1"
         # Mirror 10% of traffic for sampling
